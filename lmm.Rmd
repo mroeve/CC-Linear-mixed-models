@@ -1,0 +1,198 @@
+---
+title: "lmm_tutorial"
+author: "mtnrk"
+date: "2/23/2020"
+output: html_document
+---
+
+```{r data}
+library(ggplot2)
+library(lme4)
+
+load("dragons.RData")
+head(dragons)
+
+hist(dragons$testScore)  # seems close to a normal distribution - good!
+hist(dragons$bodyLength2)
+
+
+dragons$bodyLength2 <- scale(dragons$bodyLength, center = T, scale = T)
+
+basic.lm <- lm(testScore ~ bodyLength2, data=dragons)
+summary(basic.lm)
+
+#plot
+ggplot(dragons, aes(x = bodyLength, y = testScore)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+
+plot(basic.lm)
+
+
+
+boxplot(testScore ~ mountainRange, data = dragons)  # certainly looks like something is going on here
+
+ggplot(dragons, aes(x = bodyLength, y = testScore, colour = mountainRange)) +
+  geom_point(size = 2) +
+  theme_bw() +
+  theme(legend.position = "none")
+
+ggplot(aes(bodyLength, testScore), data = dragons) + 
+  geom_point() + 
+  facet_wrap(~ mountainRange) + # create a facet for each mountain range
+  xlab("length") + 
+  ylab("test score")
+
+#Add mountain range as a fixed effect to our basic.lm 
+#But we are not interested in quantifying test scores for each specific mountain range: we just want to know whether body length affects test scores and we want to simply control for the variation coming from mountain ranges.
+
+
+mountain.lm <- lm(testScore ~ bodyLength2 + mountainRange, data = dragons)
+summary(mountain.lm)
+
+```
+
+Should my variables be fixed or random effects?
+
+In broad terms, fixed effects are variables that we expect will have an effect on the dependent/response variable: they’re what you call explanatory variables in a standard linear regression. In our case, we are interested in making conclusions about how dragon body length impacts the dragon’s test score. So body length is a fixed effect and test score is the dependent variable.
+
+On the other hand, random effects are usually grouping factors for which we are trying to control. They are always categorical, as you can’t force R to treat a continuous variable as a random effect. A lot of the time we are not specifically interested in their impact on the response variable, but we know that they might be influencing the patterns we see.
+
+Additionally, the data for our random effect is just a sample of all the possibilities: with unlimited time and funding we might have sampled every mountain where dragons live, every school in the country, every chocolate in the box), but we usually tend to generalise results to a whole population based on representative sampling. We don’t care about estimating how much better pupils in school A have done compared to pupils in school B, but we know that their respective teachers might be a reason why their scores would be different, and we’d like to know how much variation is attributable to this when we predict scores for pupils in school Z.
+
+
+
+More about random effects
+
+Note that the golden rule is that you generally want your random effect to have at least five levels. So, for instance, if we wanted to control for the effects of dragon’s sex on intelligence, we would fit sex (a two level factor: male or female) as a fixed, not random, effect.
+
+This is, put simply, because estimating variance on few data points is very imprecise. Mathematically you could, but you wouldn’t have a lot of confidence in it. If you only have two or three levels, the model will struggle to partition the variance - it will give you an output, but not necessarily one you can trust.
+
+Finally, keep in mind that the name random doesn’t have much to do with mathematical randomness. Yes, it’s confusing. Just think about them as the grouping variables for now. Strictly speaking it’s all about making our models representative of our questions and getting better estimates. Hopefully, our next few examples will help you make sense of how and why they’re used.
+
+
+```{r mixed}
+mixed.lmer <- lmer(testScore ~ bodyLength2 + (1|mountainRange), data = dragons)
+summary(mixed.lmer)
+
+
+
+
+plot(mixed.lmer)  # looks alright, no patterns evident
+
+
+qqnorm(resid(mixed.lmer))
+qqline(resid(mixed.lmer))  # points fall nicely onto the line - good!
+
+
+str(dragons)
+head(dragons)
+
+dragons <- within(dragons, sample <- factor(mountainRange:site))
+
+
+
+
+mixed.lmer2 <- lmer(testScore ~ bodyLength2 + (1|mountainRange) + (1|sample), data = dragons)  # the syntax stays the same, but now the nesting is taken into account
+summary(mixed.lmer2)
+```
+
+
+```{r mixed2}
+
+
+
+(mm_plot <- ggplot(dragons, aes(x = bodyLength, y = testScore, colour = site)) +
+      facet_wrap(~mountainRange, nrow=2) +   # a panel for each mountain range
+      geom_point(alpha = 0.5) +
+      theme_classic() +
+      geom_line(data = cbind(dragons, pred = predict(mixed.lmer2)), aes(y = pred), size = 1) +  # adding predicted line from mixed model 
+      theme(legend.position = "none",
+            panel.spacing = unit(2, "lines"))  # adding space between panels
+)
+
+
+
+
+
+
+
+mixed.ranslope <- lmer(testScore ~ bodyLength2 + (1 + bodyLength2|mountainRange/site), data = dragons) 
+
+summary(mixed.ranslope)
+
+
+
+### plot
+(mm_plot <- ggplot(dragons, aes(x = bodyLength, y = testScore, colour = site)) +
+      facet_wrap(~mountainRange, nrow=2) +   # a panel for each mountain range
+      geom_point(alpha = 0.5) +
+      theme_classic() +
+      geom_line(data = cbind(dragons, pred = predict(mixed.ranslope)), aes(y = pred), size = 1) +  # adding predicted line from mixed model 
+      theme(legend.position = "none",
+            panel.spacing = unit(2, "lines"))  # adding space between panels
+)
+
+
+
+
+```
+
+```{r ggeffect}
+library(ggeffects)
+
+
+# Extract the prediction data frame
+pred.mm <- ggpredict(mixed.lmer2, terms = c("bodyLength2"))  # this gives overall predictions for the model
+
+# Plot the predictions 
+
+(ggplot(pred.mm) + 
+   geom_line(aes(x = x, y = predicted)) +          # slope
+   geom_ribbon(aes(x = x, ymin = predicted - std.error, ymax = predicted + std.error), 
+               fill = "lightgrey", alpha = 0.5) +  # error band
+   geom_point(data = dragons,                      # adding the raw data (scaled values)
+              aes(x = bodyLength2, y = testScore, colour = mountainRange)) + 
+   labs(x = "Body Length (indexed)", y = "Test Score", 
+        title = "Body length does not affect intelligence in dragons") + 
+   theme_minimal()
+)
+
+
+
+ggpredict(mixed.lmer2, terms = c("bodyLength2", "mountainRange"), type = "re") %>% 
+   plot() +
+   labs(x = "Body Length", y = "Test Score", title = "Effect of body size on intelligence in dragons") + 
+   theme_minimal()
+
+library(stargazer)
+
+
+
+
+stargazer(mixed.lmer2, type = "text",
+          digits = 3,
+          star.cutoffs = c(0.05, 0.01, 0.001),
+          digit.separator = "")
+
+
+
+```
+```{r compare models}
+
+
+full.lmer <- lmer(testScore ~ bodyLength2 + (1|mountainRange) + (1|sample), 
+				  data = dragons, REML = FALSE)
+reduced.lmer <- lmer(testScore ~ 1 + (1|mountainRange) + (1|sample), 
+					     data = dragons, REML = FALSE)
+
+
+
+
+anova(reduced.lmer, full.lmer)  # the two models are not significantly different
+
+
+
+```
+
